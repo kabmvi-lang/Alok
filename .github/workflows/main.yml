@@ -15,9 +15,11 @@ jobs:
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "UserAuthentication" -Value 1 -Force
-          netsh advfirewall firewall delete rule name="RDP-Bore"
-          netsh advfirewall firewall add rule name="RDP-Bore" `
+
+          netsh advfirewall firewall delete rule name="RDP-Serveo"
+          netsh advfirewall firewall add rule name="RDP-Serveo" `
             dir=in action=allow protocol=TCP localport=3389
+
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Secure Password
@@ -41,39 +43,34 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "KAVI"
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
-      - name: Install bore
+      - name: Start serveo Tunnel
         run: |
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
-          Expand-Archive bore.zip -DestinationPath bore -Force
-
-      - name: Start bore Tunnel
-        run: |
-          Start-Process -FilePath ".\bore\bore.exe" -ArgumentList "local 3389 --to bore.pub" `
-            -RedirectStandardOutput bore.log -RedirectStandardError bore.err -WindowStyle Hidden
+          $job = Start-Job -ScriptBlock {
+            ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 0:localhost:3389 serveo.net
+          }
+          Start-Sleep -Seconds 15
+          $out = Receive-Job -Job $job -Keep
+          Write-Host "---- serveo log ----"
+          $out
+          Write-Host "---------------------"
 
           $addr = $null
-          $retries = 0
-          while (-not $addr -and $retries -lt 12) {
-              Start-Sleep -Seconds 5
-              $text = (Get-Content bore.log, bore.err -ErrorAction SilentlyContinue) -join " "
-              if ($text -match "bore\.pub:(\d+)") { $addr = "bore.pub:" + $Matches[1] }
-              $retries++
-          }
+          if ($out -match "serveo\.net:(\d+)") { $addr = "serveo.net:" + $Matches[1] }
 
           if (-not $addr) {
-              Get-Content bore.log, bore.err -ErrorAction SilentlyContinue
-              Write-Error "bore tunnel not created"
+              Write-Error "serveo tunnel address nahi mila, log upar dekho"
               exit 1
           }
-          echo "BORE_ADDR=$addr" >> $env:GITHUB_ENV
+          echo "SERVEO_ADDR=$addr" >> $env:GITHUB_ENV
 
       - name: Maintain Connection
         run: |
           Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address : $env:BORE_ADDR"
+          Write-Host "Address : $env:SERVEO_ADDR"
           Write-Host "Username: KAVI"
           Write-Host "Password: $env:RDP_PASS"
           Write-Host "==================`n"
+
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Cancel the workflow to stop"
               Start-Sleep -Seconds 300
